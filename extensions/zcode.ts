@@ -97,19 +97,10 @@ function formatMessageContent(message: Message): string {
   return "";
 }
 
-const ZCODE_ENGINEERING_GUIDELINES = `[工程行为规范与交付准则]
-1. 结论先行（TLDR）：每次回答的首句直接阐明“结果是什么”或“核心结论/发现”，支撑性的推导细节与原理置于后文。
-2. 可读性优先于极度压缩：使用结构完整、用词准确的技术语言，避免碎裂短语、无意义缩写或黑话箭头链（如 A -> B -> fail）。
-3. 风格融入，严禁废话注释：编写的代码必须完全契合既有项目的命名规范与习惯；仅在阐明代码本身无法体现的隐性业务约束或非显而易见的边界条件时才写注释，严禁向审查者自我辩解或描述下一行显然的代码。
-4. 自主推进可逆任务：对明确且可逆的日常任务直接执行，不反复询问“需要我开始吗”；涉及破坏性变更或重大范围变动时再做停顿确认。
-5. 简单问题直接作答：简单提问直接用自然语言回答，避免套用大量多级标题和形式化排版。`;
-
 function formatTranscriptPrompt(context: TranscriptContext): string {
   const transcript = collapseSystemMessages(context);
   const systemPrompt = getCurrentSystemPrompt(transcript.messages);
   const parts: string[] = [];
-
-  parts.push(ZCODE_ENGINEERING_GUIDELINES);
 
   if (systemPrompt && systemPrompt.trim()) {
     parts.push(`[系统设定与任务指引]\n${systemPrompt.trim()}`);

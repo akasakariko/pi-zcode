@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, symlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import readline from "node:readline";
 import { loadDesktopAccount, type ZCodeAccount } from "./account.ts";
 
@@ -117,11 +118,16 @@ export class ZCodeBridge {
         }
 
         const zcodeBin = this.resolveZCodePath();
+        const interceptorPath = fileURLToPath(new URL("./interceptor.cjs", import.meta.url));
+        const nodeOptions = process.env.NODE_OPTIONS
+          ? `${process.env.NODE_OPTIONS} --require ${interceptorPath}`
+          : `--require ${interceptorPath}`;
 
         this.proc = spawn("node", [zcodeBin, "app-server", "--stdio"], {
           stdio: ["pipe", "pipe", "pipe"],
           env: {
             ...process.env,
+            NODE_OPTIONS: nodeOptions,
             GLM_BINARY_PATH: zcodeBin,
           },
         });
