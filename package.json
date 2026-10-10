@@ -1,0 +1,23 @@
+{
+  "name": "pi-zcode",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Pi extension to use ZCode account and GLM models (Start Plan & Weekend Build).",
+  "keywords": [
+    "pi-package"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/KayanoLiam/pi-zcode.git"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/zcode.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}
