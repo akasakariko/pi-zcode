@@ -1,19 +1,11 @@
 import { spawn } from "node:child_process";
 import {
   type Api,
-  type AssistantMessage,
   type AssistantMessageEventStream,
-  calculateCost,
-  collapseSystemMessages,
-  createAssistantMessageEventStream,
-  getCurrentSystemPrompt,
-  type Message,
   type Model,
   type OAuthCredentials,
   type OAuthLoginCallbacks,
   type SimpleStreamOptions,
-  type TextContent,
-  type ThinkingContent,
   type TranscriptContext,
 } from "@earendil-works/pi-ai";
 import { anthropicMessagesApi } from "@earendil-works/pi-ai/compat";
@@ -32,7 +24,7 @@ import {
   pollBrowserLogin,
   startBrowserLogin,
 } from "../src/account.ts";
-import { ZCodeBridge } from "../src/bridge.ts";
+import { streamZcodeDirect } from "../src/direct-client.ts";
 
 const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 
@@ -79,80 +71,12 @@ async function discoverModels(apiKey: string, signal?: AbortSignal) {
   return modelsFromPlan(await fetchPublicModels(apiKey, signal));
 }
 
-function formatMessageContent(message: Message): string {
-  if (typeof message.content === "string") return message.content;
-  if (Array.isArray(message.content)) {
-    return message.content
-      .map((block: any) => {
-        if (block.type === "text") return block.text;
-        if (block.type === "thinking") return `[思考过程: ${block.thinking}]`;
-        if (block.type === "toolCall") {
-          return `[调用工具: ${block.name}(${JSON.stringify(block.arguments)})]`;
-        }
-        return "";
-      })
-      .filter(Boolean)
-      .join("\n");
-  }
-  return "";
-}
-
-function formatTranscriptPrompt(context: TranscriptContext): string {
-  const transcript = collapseSystemMessages(context);
-  const systemPrompt = getCurrentSystemPrompt(transcript.messages);
-  const parts: string[] = [];
-
-  if (systemPrompt && systemPrompt.trim()) {
-    parts.push(`[系统设定与任务指引]\n${systemPrompt.trim()}`);
-  }
-
-  const messages = transcript.messages.filter((m) => m.role !== "system");
-
-  if (messages.length === 1 && messages[0].role === "user") {
-    const userContent = formatMessageContent(messages[0]);
-    if (parts.length > 0) {
-      return `${parts.join("\n\n")}\n\n[用户需求]\n${userContent}`;
-    }
-    return userContent;
-  }
-
-  if (messages.length > 0) {
-    parts.push("[对话历史记录]");
-    for (let i = 0; i < messages.length - 1; i++) {
-      const m = messages[i];
-      const roleLabel = m.role === "user" ? "用户" : m.role === "assistant" ? "助手" : "工具输出";
-      parts.push(`${roleLabel}: ${formatMessageContent(m)}`);
-    }
-
-    const lastMsg = messages[messages.length - 1];
-    if (lastMsg.role === "user") {
-      parts.push(`[当前用户提问]\n${formatMessageContent(lastMsg)}`);
-    } else {
-      const roleLabel = lastMsg.role === "assistant" ? "助手" : "工具输出";
-      parts.push(`${roleLabel}: ${formatMessageContent(lastMsg)}`);
-    }
-  }
-
-  return parts.join("\n\n");
-}
-
 function streamZcode(
   model: Model<Api>,
   context: TranscriptContext,
   options?: SimpleStreamOptions
 ): AssistantMessageEventStream {
-  let apiKey = options?.apiKey;
-
-  // Fallback to auto-detecting desktop credentials if apiKey was not explicitly set
-  if (!apiKey) {
-    try {
-      const desktop = loadDesktopAccount();
-      // loadDesktopAccount is async in signature but creds can be read
-      // We will let streamZcodeBridge load it
-    } catch {
-      // Ignore
-    }
-  }
+  const apiKey = options?.apiKey;
 
   // If using public API Key (e.g. key.secret format), route through public Anthropic endpoint
   if (apiKey && !isJwt(apiKey)) {
@@ -163,192 +87,8 @@ function streamZcode(
     );
   }
 
-  // Otherwise, use ZCodeBridge (native app-server execution for Start Plan)
-  return streamZcodeBridge(model, context, options, apiKey);
-}
-
-function streamZcodeBridge(
-  model: Model<Api>,
-  context: TranscriptContext,
-  options?: SimpleStreamOptions,
-  jwt?: string
-): AssistantMessageEventStream {
-  const stream = createAssistantMessageEventStream();
-  const bridge = ZCodeBridge.getInstance();
-
-  const output: AssistantMessage = {
-    role: "assistant",
-    content: [],
-    api: model.api,
-    provider: model.provider,
-    model: model.id,
-    usage: {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-      totalTokens: 0,
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-    },
-    stopReason: "pending",
-    timestamp: Date.now(),
-  };
-
-  const prompt = formatTranscriptPrompt(context);
-
-  (async () => {
-    try {
-      if (jwt) {
-        bridge.setJwt(jwt);
-      }
-
-      await options?.onPayload?.(prompt);
-
-      stream.push({ type: "start", partial: output });
-
-      let thinkingBlock: (ThinkingContent & { index: number }) | null = null;
-      let textBlock: (TextContent & { index: number }) | null = null;
-
-      const reasoningLevel =
-        options?.reasoning === "low"
-          ? "low"
-          : options?.reasoning === "high"
-          ? "high"
-          : "max";
-
-      const result = await bridge.streamTurn({
-        modelId: model.id,
-        prompt,
-        reasoningLevel,
-        signal: options?.signal,
-        onThinkingStart: () => {
-          thinkingBlock = {
-            type: "thinking",
-            thinking: "",
-            thinkingSignature: "",
-            index: output.content.length,
-          };
-          output.content.push(thinkingBlock);
-          stream.push({
-            type: "thinking_start",
-            contentIndex: output.content.length - 1,
-            partial: output,
-          });
-        },
-        onThinkingDelta: (delta) => {
-          if (!thinkingBlock) {
-            thinkingBlock = {
-              type: "thinking",
-              thinking: "",
-              thinkingSignature: "",
-              index: output.content.length,
-            };
-            output.content.push(thinkingBlock);
-            stream.push({
-              type: "thinking_start",
-              contentIndex: output.content.length - 1,
-              partial: output,
-            });
-          }
-          thinkingBlock.thinking += delta;
-          const idx = output.content.indexOf(thinkingBlock);
-          stream.push({
-            type: "thinking_delta",
-            contentIndex: idx,
-            delta,
-            partial: output,
-          });
-        },
-        onThinkingEnd: (content) => {
-          if (thinkingBlock) {
-            thinkingBlock.thinking = content;
-            const idx = output.content.indexOf(thinkingBlock);
-            stream.push({
-              type: "thinking_end",
-              contentIndex: idx,
-              content,
-              partial: output,
-            });
-          }
-        },
-        onTextStart: () => {
-          textBlock = {
-            type: "text",
-            text: "",
-            index: output.content.length,
-          };
-          output.content.push(textBlock);
-          stream.push({
-            type: "text_start",
-            contentIndex: output.content.length - 1,
-            partial: output,
-          });
-        },
-        onTextDelta: (delta) => {
-          if (!textBlock) {
-            textBlock = {
-              type: "text",
-              text: "",
-              index: output.content.length,
-            };
-            output.content.push(textBlock);
-            stream.push({
-              type: "text_start",
-              contentIndex: output.content.length - 1,
-              partial: output,
-            });
-          }
-          textBlock.text += delta;
-          const idx = output.content.indexOf(textBlock);
-          stream.push({
-            type: "text_delta",
-            contentIndex: idx,
-            delta,
-            partial: output,
-          });
-        },
-        onTextEnd: (content) => {
-          if (textBlock) {
-            textBlock.text = content;
-            const idx = output.content.indexOf(textBlock);
-            stream.push({
-              type: "text_end",
-              contentIndex: idx,
-              content,
-              partial: output,
-            });
-          }
-        },
-      });
-
-      output.stopReason = "stop";
-      if (result.usage) {
-        output.usage.input = result.usage.inputTokens ?? 0;
-        output.usage.output = result.usage.outputTokens ?? 0;
-        output.usage.totalTokens = result.usage.totalTokens ?? 0;
-        output.usage.cacheRead = result.usage.cacheReadTokens ?? 0;
-        output.usage.cacheWrite = result.usage.cacheWriteTokens ?? 0;
-        calculateCost(model, output.usage);
-      }
-
-      stream.push({
-        type: "done",
-        reason: "stop",
-        message: output,
-      });
-    } catch (err: any) {
-      const isAborted = options?.signal?.aborted || err?.name === "AbortError";
-      output.stopReason = isAborted ? "aborted" : "error";
-      output.errorMessage = err instanceof Error ? err.message : String(err);
-      stream.push({
-        type: "error",
-        reason: output.stopReason,
-        error: output,
-      });
-    }
-  })();
-
-  return stream;
+  // Pure direct HTTP streaming from Pi to Z.ai (zero app-server subprocess)
+  return streamZcodeDirect(model, context, options, apiKey || "");
 }
 
 async function login(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
