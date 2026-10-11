@@ -85,4 +85,3 @@ ZCode Start Plan 的服务端对话接口受到客户端环境与安全验证保
 2. 自动注入安全验证握手与 Start Plan 凭证；
 3. 将 Pi 的上下文转译后以 SSE 流式实时接收 `reasoning_delta`（思考过程）和 `text_delta`（生成文本）；
 4. 提供空闲自动解绑与进程生命周期管理，单次命令模式与交互模式均能平滑退出。
-5. 请求 GLM 前清洗 ZCode 注入的人设、Harness 规则和 `system-reminder`。这不是再追加一段“忽略前文”的覆盖指令；Pi 自己的系统提示留在对话内容里。
